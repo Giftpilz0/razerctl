@@ -1,0 +1,141 @@
+---
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    uses: Giftpilz0/shared/.github/workflows/lint.yml@main
+
+  goreleaser:
+    needs: lint
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+
+      - name: Test
+        run: go test ./...
+
+      - name: Create release tag
+        id: tag
+        run: |
+          tag="v0.0.${GITHUB_RUN_NUMBER}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git tag "${tag}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${tag}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prune old generated releases
+        uses: actions/github-script@v9
+        env:
+          CURRENT_TAG: ${{ steps.tag.outputs.tag }}
+        with:
+          script: |
+            const keep = 2;
+            const isManagedTag = (tag) =>
+              tag.startsWith("v0.0.") || tag.startsWith("release-");
+            const { owner, repo } = context.repo;
+            const currentTag = process.env.CURRENT_TAG;
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+            let releases = [];
+            for (let attempt = 0; attempt < 10; attempt += 1) {
+              releases = await github.paginate(github.rest.repos.listReleases, {
+                owner,
+                repo,
+                per_page: 100,
+              });
+
+              if (releases.some((release) => release.tag_name === currentTag)) {
+                break;
+              }
+
+              core.info(`Waiting for release ${currentTag} to become visible...`);
+              await sleep(3000);
+            }
+
+            const generated = releases
+              .filter((release) => isManagedTag(release.tag_name))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+            const keepTags = new Set(
+              generated.slice(0, keep).map((release) => release.tag_name),
+            );
+
+            for (const release of generated.slice(keep)) {
+              core.info(`Deleting old generated release ${release.tag_name}`);
+              await github.rest.repos.deleteRelease({
+                owner,
+                repo,
+                release_id: release.id,
+              });
+
+              try {
+                await github.rest.git.deleteRef({
+                  owner,
+                  repo,
+                  ref: `tags/${release.tag_name}`,
+                });
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+              }
+            }
+
+            const refs = await github.paginate(github.rest.git.listMatchingRefs, {
+              owner,
+              repo,
+              ref: "tags",
+              per_page: 100,
+            });
+
+            for (const ref of refs) {
+              const tag = ref.ref.replace("refs/tags/", "");
+              if (!isManagedTag(tag) || keepTags.has(tag)) {
+                continue;
+              }
+
+              core.info(`Deleting old generated tag ${tag}`);
+              try {
+                await github.rest.git.deleteRef({
+                  owner,
+                  repo,
+                  ref: `tags/${tag}`,
+                });
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+              }
+            }

@@ -1,0 +1,2 @@
+# Give the logged-in user access to the DeathAdder V2 Pro hidraw nodes (wired/wireless/dock).
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1532", ATTRS{idProduct}=="007c|007d|007e", TAG+="uaccess"

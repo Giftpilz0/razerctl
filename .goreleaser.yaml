@@ -1,0 +1,26 @@
+---
+version: 2
+
+project_name: razerctl
+
+builds:
+  - main: .
+    binary: razerctl
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    # hidraw and flock: Linux only
+    goos:
+      - linux
+    goarch:
+      - amd64
+
+archives:
+  - formats: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"

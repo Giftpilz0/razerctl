@@ -1,0 +1,12 @@
+[Unit]
+Description=Keep Razer DeathAdder V2 Pro and Mouse Dock lighting applied
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/razerctl daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
